@@ -62,10 +62,13 @@ double VarAST::eval(const State& s) const { return s[name]; }
 str VarAST::get_name() const { return name; }
 
 NumConstAST::NumConstAST(double v) : value(v) {}
+double NumConstAST::get_value() const { return value; }
 set<str> NumConstAST::get_vars() const { return {}; }
 double NumConstAST::eval(const State& s) const { return value; }
 
 UnaryExpAST::UnaryExpAST(kind op, ptr<ExpAST> rhs) : op(op), rhs(std::move(rhs)) {}
+kind UnaryExpAST::get_op() const { return op; }
+ExpAST *UnaryExpAST::get_rhs() const { return rhs.get(); }
 set<str> UnaryExpAST::get_vars() const { return rhs->get_vars(); }
 double UnaryExpAST::eval(const State& s) const {
   auto v = rhs->eval(s);
@@ -81,6 +84,9 @@ double UnaryExpAST::eval(const State& s) const {
 
 BinaryExpAST::BinaryExpAST(kind op, ptr<ExpAST> l, ptr<ExpAST> r)
   : op(op), lhs(std::move(l)), rhs(std::move(r)) {}
+kind BinaryExpAST::get_op() const { return op; }
+ExpAST *BinaryExpAST::get_lhs() const { return lhs.get(); }
+ExpAST *BinaryExpAST::get_rhs() const { return rhs.get(); }
 set<str> BinaryExpAST::get_vars() const {
   auto result = lhs->get_vars();
   auto r = rhs->get_vars();
@@ -124,6 +130,8 @@ double BinaryExpAST::eval(const State& s) const {
 
 CallAST::CallAST(const str &n, vec<ptr<ExpAST>> a)
   : name(n), args(std::move(a)) {}
+const str &CallAST::get_name() const { return name; }
+const vec<ptr<ExpAST>> &CallAST::get_args() const { return args; }
 set<str> CallAST::get_vars() const {
   set<str> result{name};
   for (const auto& arg : args) {
@@ -150,6 +158,8 @@ double CallAST::eval(const State& s) const {
 
 AsgnStmtAST::AsgnStmtAST(ptr<VarAST> v, ptr<ExpAST> e)
   : var(std::move(v)), expr(std::move(e)) {}
+const VarAST *AsgnStmtAST::get_lhs() const { return var.get(); }
+const ExpAST *AsgnStmtAST::get_rhs() const { return expr.get(); }
 set<str> AsgnStmtAST::get_vars() const {
   auto vars = expr->get_vars();
   vars.insert(var->get_name());
@@ -166,6 +176,8 @@ State &SkipStmtAST::run(State& s) const { return s; }
 
 SeqStmtAST::SeqStmtAST(ptr<StmtAST> l, ptr<StmtAST> r)
   : lhs(std::move(l)), rhs(std::move(r)) {}
+const StmtAST *SeqStmtAST::get_lhs() const { return lhs.get(); }
+const StmtAST *SeqStmtAST::get_rhs() const { return rhs.get(); }
 set<str> SeqStmtAST::get_vars() const {
   auto result = lhs->get_vars();
   auto r = rhs->get_vars();
@@ -180,6 +192,9 @@ State &SeqStmtAST::run(State& s) const {
 
 IfStmtAST::IfStmtAST(ptr<ExpAST> c, ptr<StmtAST> t, ptr<StmtAST> e)
   : cond(std::move(c)), then_stmt(std::move(t)), else_stmt(std::move(e)) {}
+const ExpAST *IfStmtAST::get_cond() const { return cond.get(); }
+const StmtAST *IfStmtAST::get_then_stmt() const { return then_stmt.get(); }
+const StmtAST *IfStmtAST::get_else_stmt() const { return else_stmt.get(); }
 set<str> IfStmtAST::get_vars() const {
   auto result = cond->get_vars();
   auto r = then_stmt->get_vars();
@@ -199,6 +214,8 @@ State &IfStmtAST::run(State& s) const {
 
 WhileStmtAST::WhileStmtAST(ptr<ExpAST> c, ptr<StmtAST> s)
   : cond(std::move(c)), stmt(std::move(s)) {}
+const ExpAST *WhileStmtAST::get_cond() const { return cond.get(); }
+const StmtAST *WhileStmtAST::get_stmt() const { return stmt.get(); }
 set<str> WhileStmtAST::get_vars() const {
   auto result = cond->get_vars();
   auto r = stmt->get_vars();
@@ -217,6 +234,10 @@ FuncDefAST::FuncDefAST(str n, vec<str> p, ptr<StmtAST> b)
   auto unique_params = set<str>(params.begin(), params.end());
   if (unique_params.size() != params.size()) {
     throw ParserError("Duplicate parameter names");
+  }
+  auto ret_p = unique_params.find("ret");
+  if (ret_p != unique_params.end()) {
+    throw ParserError("Parameter name 'ret' is reserved");
   }
 }
 set<str> FuncDefAST::get_vars() const {
@@ -484,6 +505,12 @@ static ptr<FuncDefAST> parse_func_def(Lexer &lexer) {
     } else {
       throw ParserError{"Expect an identifier as a function argument"};
     }
+  }
+
+  auto maybe_cnuf = lexer.peek_token();
+  if (is_keyword_of_kind(*maybe_cnuf, Keyword::Kind::Cnuf)) {
+    lexer.get_token();
+    return std::make_unique<FuncDefAST>(name_str, std::move(arg_names), nullptr);
   }
 
   auto body = parse_stmt(lexer);

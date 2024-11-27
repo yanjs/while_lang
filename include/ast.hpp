@@ -60,6 +60,7 @@ class NumConstAST: public ExpAST {
   double value;
 public:
   NumConstAST(double v);
+  virtual double get_value() const;
   virtual set<str> get_vars() const override;
   virtual double eval(const State&) const override;
 };
@@ -69,6 +70,8 @@ class UnaryExpAST: public ExpAST {
   ptr<ExpAST> rhs;
 public:
   UnaryExpAST(kind o, ptr<ExpAST> r);
+  kind get_op() const;
+  ExpAST *get_rhs() const;
   virtual set<str> get_vars() const override;
   virtual double eval(const State&) const override;
 };
@@ -79,6 +82,10 @@ class BinaryExpAST: public ExpAST {
   ptr<ExpAST> rhs;
 public:
   BinaryExpAST(kind o, ptr<ExpAST> l, ptr<ExpAST> r);
+  kind get_op() const;
+  ExpAST *get_lhs() const;
+  ExpAST *get_rhs() const;
+
   virtual set<str> get_vars() const override;
   virtual double eval(const State&) const override;
 };
@@ -88,6 +95,8 @@ class CallAST: public ExpAST {
   vec<ptr<ExpAST>> args;
 public:
   CallAST(const str& n, vec<ptr<ExpAST>> a);
+  const str& get_name() const;
+  const vec<ptr<ExpAST>>& get_args() const;
   virtual set<str> get_vars() const override;
   virtual double eval(const State&) const override;
 };
@@ -104,6 +113,8 @@ class AsgnStmtAST: public StmtAST {
   ptr<ExpAST> expr;
 public:
   AsgnStmtAST(ptr<VarAST> v, ptr<ExpAST> e);
+  const VarAST *get_lhs() const;
+  const ExpAST *get_rhs() const;
   virtual set<str> get_vars() const override;
   virtual State& run(State&) const override;
 };
@@ -119,6 +130,8 @@ class SeqStmtAST : public StmtAST {
   ptr<StmtAST> rhs;
 public:
   SeqStmtAST(ptr<StmtAST> l, ptr<StmtAST> r);
+  const StmtAST *get_lhs() const;
+  const StmtAST *get_rhs() const;
   virtual set<str> get_vars() const override;
   virtual State& run(State&) const override;
 };
@@ -129,6 +142,9 @@ class IfStmtAST : public StmtAST {
   ptr<StmtAST> else_stmt;
 public:
   IfStmtAST(ptr<ExpAST> c, ptr<StmtAST> t, ptr<StmtAST> e);
+  const ExpAST *get_cond() const;
+  const StmtAST *get_then_stmt() const;
+  const StmtAST *get_else_stmt() const;
   virtual set<str> get_vars() const override;
   virtual State& run(State&) const override;
 };
@@ -138,6 +154,8 @@ class WhileStmtAST : public StmtAST {
   ptr<StmtAST> stmt;
 public:
   WhileStmtAST(ptr<ExpAST> c, ptr<StmtAST> b);
+  const ExpAST *get_cond() const;
+  const StmtAST *get_stmt() const;
   virtual set<str> get_vars() const override;
   virtual State& run(State&) const override;
 };
