@@ -1,0 +1,23 @@
+func plus(x)
+  ret := x + x * (2 * (x + 3))
+cnuf;
+x := 42;
+y := plus(x);
+while y > 0 do
+  y := y - 1;
+  z := z + 2
+od;
+if z == 7644 then
+  lo := 21
+else
+  lo := 14
+fi;
+func fib(x)
+  if x == 0 or x == 1 then
+    ret := 1
+  else
+    ret := fib(x - 1) + fib(x - 2)
+  fi
+cnuf;
+fb := 1 + fib(10);
+ret := fb

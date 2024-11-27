@@ -1,6 +1,8 @@
 #include "ast.hpp"
 #include "codegen.hpp"
 #include "KaleidoscopeJIT.h"
+#include <llvm/TargetParser/Host.h>
+#include <algorithm>
 
 using llvm::Value;
 using llvm::ConstantFP;
@@ -49,7 +51,7 @@ CodegenContext::CodegenContext() :
       FunctionType::get(
         Type::getDoubleTy(*m_context), {}, false),
       Function::ExternalLinkage,
-      "<module>",
+      "__anon_expr",
       *m_module)),
   m_FPM(std::make_unique<FunctionPassManager>()),
   m_LAM(std::make_unique<LoopAnalysisManager>()),
@@ -61,22 +63,21 @@ CodegenContext::CodegenContext() :
   m_named_values({}),
   m_functions({}),
   m_next_id(0) {
-  std::cerr << "Before CodegenContext{} " << std::endl;
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+    llvm::InitializeNativeTargetAsmParser();
+
     auto maybe_JIT = llvm::orc::KaleidoscopeJIT::Create();
-  std::cerr << "After JIT Create " << std::endl;
     if (!maybe_JIT) {
-  std::cerr << "After JIT Create error " << std::endl;
       auto err = maybe_JIT.takeError();
       auto err_msg = llvm::toString(std::move(err));
       std::cerr << "Failed to create KaleidoscopeJIT: " << err_msg << std::endl;
       throw CodegenError("Failed to create KaleidoscopeJIT");
     }
-  std::cerr << "After JIT Create2 " << std::endl;
     s_JIT = maybe_JIT.operator bool() ? std::move(maybe_JIT.get()) : nullptr;
     if (!s_JIT) {
       throw CodegenError("Failed to create KaleidoscopeJIT");
     }
-  std::cerr << "After JIT " << std::endl;
 
     m_module->setDataLayout(s_JIT->getDataLayout());
 
@@ -91,6 +92,9 @@ CodegenContext::CodegenContext() :
     PB.registerModuleAnalyses(*m_MAM);
     PB.registerFunctionAnalyses(*m_FAM);
     PB.crossRegisterProxies(*m_LAM, *m_FAM, *m_CGAM, *m_MAM);
+
+    BasicBlock *entry = BasicBlock::Create(*m_context, "entry", m_top_level_function.get());
+    m_builder->SetInsertPoint(entry);
   }
 
 Value *CodegenContext::codegen_VarAST(const VarAST &var) {
@@ -112,47 +116,59 @@ Value *CodegenContext::codegen_NumConstAST(const NumConstAST &num) {
 
 Value *CodegenContext::codegen_UnaryExpAST(const UnaryExpAST &exp) {
   auto rhs = codegen(*exp.get_rhs());
+  Value *result;
   switch (exp.get_op()) {
     case Keyword::Kind::Not:
-      return m_builder->CreateNot(rhs, "not");
+      rhs = ensure_int(rhs);
+      result = m_builder->CreateNot(rhs, "not"); break;
     default:
       throw CodegenError("codegen: Unknown unary operator");
   }
+  result = ensure_double(result);
+  return result;
 }
 
 Value *CodegenContext::codegen_BinaryExpAST(const BinaryExpAST &exp) {
   auto lhs = codegen(*exp.get_lhs());
   auto rhs = codegen(*exp.get_rhs());
+  Value *result;
   switch (exp.get_op()) {
   case Keyword::Kind::And:
-    return m_builder->CreateAnd(lhs, rhs, "and");
+    lhs = ensure_int(lhs);
+    rhs = ensure_int(rhs);
+    result = m_builder->CreateAnd(lhs, rhs, "and"); break;
   case Keyword::Kind::Or:
-    return m_builder->CreateOr(lhs, rhs, "or");
+    lhs = ensure_int(lhs);
+    rhs = ensure_int(rhs);
+    result = m_builder->CreateOr(lhs, rhs, "or"); break;
   case Keyword::Kind::Lt:
-    return m_builder->CreateFCmpULT(lhs, rhs, "lt");
+    result = m_builder->CreateFCmpULT(lhs, rhs, "lt"); break;
   case Keyword::Kind::Le:
-    return m_builder->CreateFCmpULE(lhs, rhs, "le");
+    result = m_builder->CreateFCmpULE(lhs, rhs, "le"); break;
   case Keyword::Kind::Gt:
-    return m_builder->CreateFCmpUGT(lhs, rhs, "gt");
+    result = m_builder->CreateFCmpUGT(lhs, rhs, "gt"); break;
   case Keyword::Kind::Ge:
-    return m_builder->CreateFCmpUGE(lhs, rhs, "ge");
+    result = m_builder->CreateFCmpUGE(lhs, rhs, "ge"); break;
   case Keyword::Kind::Eq:
-    return m_builder->CreateFCmpOEQ(lhs, rhs, "eq");
+    result = m_builder->CreateFCmpOEQ(lhs, rhs, "eq"); break;
   case Keyword::Kind::Neq:
-    return m_builder->CreateFCmpUNE(lhs, rhs, "neq");
+    result = m_builder->CreateFCmpUNE(lhs, rhs, "neq"); break;
   case Keyword::Kind::Plus:
-    return m_builder->CreateFAdd(lhs, rhs, "plus");
+    result = m_builder->CreateFAdd(lhs, rhs, "plus"); break;
   case Keyword::Kind::Minus:
-    return m_builder->CreateFSub(lhs, rhs, "minus");
+    result = m_builder->CreateFSub(lhs, rhs, "minus"); break;
   case Keyword::Kind::Mul:
-    return m_builder->CreateFMul(lhs, rhs, "mul");
+    result = m_builder->CreateFMul(lhs, rhs, "mul"); break;
   case Keyword::Kind::Div:
-    return m_builder->CreateFDiv(lhs, rhs, "div");
+    result = m_builder->CreateFDiv(lhs, rhs, "div"); break;
   case Keyword::Kind::Mod:
-    return m_builder->CreateFRem(lhs, rhs, "mod");
+    result = m_builder->CreateFRem(lhs, rhs, "mod"); break;
   default:
     throw CodegenError("Codegen: Unknown binary operator");
   }
+  result = ensure_double(result);
+
+  return result;
 }
 
 Value *CodegenContext::codegen_CallAST(const CallAST &call) {
@@ -182,6 +198,35 @@ AllocaInst *CodegenContext::create_entry_block_alloca(Function *function, const 
   return temp_builder.CreateAlloca(Type::getDoubleTy(*m_context), nullptr, name);
 }
 
+Value *CodegenContext::ensure_double(Value *value) {
+  auto ty = value->getType();
+  if (ty->isIntegerTy()) {
+    llvm::Value *zext = m_builder->CreateZExt(value, Type::getInt32Ty(*m_context), "zext");
+    return m_builder->CreateUIToFP(zext, Type::getDoubleTy(*m_context), "(double)");
+  } else if (ty->isDoubleTy()) {
+    return value;
+  } else {
+    std::cerr << "Unknown type: ";
+    value->getType()->print(llvm::errs());
+    std::cerr << std::endl;
+    throw CodegenError("Codegen: Unknown type");
+  }
+}
+
+Value *CodegenContext::ensure_int(Value *value) {
+  auto ty = value->getType();
+  if (ty->isIntegerTy()) {
+    return value;
+  } else if (ty->isDoubleTy()) {
+    return m_builder->CreateFPToSI(value, Type::getInt32Ty(*m_context), "fptosi");
+  } else {
+    std::cerr << "Unknown type: ";
+    value->getType()->print(llvm::errs());
+    std::cerr << std::endl;
+    throw CodegenError("Codegen: Unknown type");
+  }
+}
+
 size_t CodegenContext::get_next_id() {
   return m_next_id++;
 }
@@ -194,7 +239,8 @@ void CodegenContext::codegen_AsgnStmtAST(const AsgnStmtAST &stmt) {
   auto var_name = stmt.get_lhs()->get_name();
   AllocaInst *a = m_named_values[var_name];
   if (!a) {
-    Function *function = m_builder->GetInsertBlock()->getParent();
+    auto insert_block = m_builder->GetInsertBlock();
+    Function *function = insert_block->getParent();
     a = create_entry_block_alloca(function, var_name);
     m_named_values[var_name] = a;
   }
@@ -257,11 +303,13 @@ void CodegenContext::codegen_WhileStmtAST(const WhileStmtAST &stmt) {
   BasicBlock *while_merge = BasicBlock::Create(*m_context, whilemerge_name);
 
   // cond
+  std::cerr << "Before cond" << std::endl;
   m_builder->SetInsertPoint(while_cond);
   Value *cond = codegen(*stmt.get_cond());
   cond = m_builder->CreateFCmpONE(cond, ConstantFP::get(*m_context, APFloat(0.0)), whilecond_name);
   m_builder->CreateCondBr(cond, while_true, while_merge);
   while_cond = m_builder->GetInsertBlock();
+  std::cerr << "After cond" << std::endl;
 
   // true
   function->insert(function->end(), while_true);
@@ -273,6 +321,8 @@ void CodegenContext::codegen_WhileStmtAST(const WhileStmtAST &stmt) {
   // merge
   function->insert(function->end(), while_merge);
   m_builder->SetInsertPoint(while_merge);
+
+  //function->print(llvm::errs(), nullptr);
 }
 
 void CodegenContext::codegen_FuncDefAST(const FuncDefAST &func) {
@@ -305,6 +355,8 @@ void CodegenContext::codegen_FuncDefAST(const FuncDefAST &func) {
   if (!maybe_body) {
     return;
   }
+  auto func_builder = std::make_unique<IRBuilder<> >(&function->getEntryBlock(), function->getEntryBlock().begin());
+  std::swap(m_builder, func_builder);
 
   BasicBlock *block = BasicBlock::Create(*m_context, "entry", function);
   m_builder->SetInsertPoint(block);
@@ -329,6 +381,7 @@ void CodegenContext::codegen_FuncDefAST(const FuncDefAST &func) {
 
   // restore named values
   m_named_values = std::move(prev_named_values);
+  std::swap(m_builder, func_builder);
 
   auto failed = verifyFunction(*function, &llvm::errs());
 
@@ -365,6 +418,7 @@ void CodegenContext::codegen(const StmtAST &stmt) {
   } else if (auto t = dynamic_cast<const IfStmtAST*>(&stmt)) {
     return codegen_IfStmtAST(*t);
   } else if (auto t = dynamic_cast<const WhileStmtAST*>(&stmt)) {
+    std::cerr << "Before codegen_WhileStmtAST" << std::endl;
     return codegen_WhileStmtAST(*t);
   } else if (auto t = dynamic_cast<const FuncDefAST*>(&stmt)) {
     return codegen_FuncDefAST(*t);
@@ -373,24 +427,38 @@ void CodegenContext::codegen(const StmtAST &stmt) {
   }
 }
 
-double CodegenContext::codegen_top_level(const StmtAST &exp) {
-  std::cerr << "Before codegen: " << std::endl;
-  codegen(exp);
+double CodegenContext::codegen_top_level(const StmtAST &stmt) {
+  AllocaInst *ret = create_entry_block_alloca(m_top_level_function.get(), "ret");
+  m_builder->CreateStore(ConstantFP::get(*m_context, APFloat(0.0)), ret);
+  m_named_values["ret"] = ret;
 
-  std::cerr << "After codegen: " << std::endl;
+  codegen(stmt);
+
+  Value *ret_value = m_builder->CreateLoad(Type::getDoubleTy(*m_context), m_named_values["ret"]);
+  m_builder->CreateRet(ret_value);
+
   auto RT = s_JIT->getMainJITDylib().createResourceTracker();
   auto TSM = llvm::orc::ThreadSafeModule(std::move(m_module), std::move(m_context));
   auto error = s_JIT->addModule(std::move(TSM), RT);
-  auto expr_symbol = s_JIT->lookup("<module>").get();
-  std::cerr << "Before entry: " << std::endl;
-  double (*fp)() = expr_symbol.getAddress().toPtr<double (*)()>();
-  std::cerr << "After entry. " << std::endl;
-  std::cerr << "Entry: " << fp << std::endl;
 
+  m_top_level_function->print(llvm::errs(), nullptr);
+
+  auto maybe_expr_symbol = s_JIT->lookup("__anon_expr");
+  if (!maybe_expr_symbol) {
+    auto err = maybe_expr_symbol.takeError();
+    auto err_message = llvm::toString(std::move(err));
+
+  }
+  auto expr_symbol = maybe_expr_symbol.get();
+  double (*fp)() = expr_symbol.getAddress().toPtr<double (*)()>();
   if (!fp) {
     return -42.0;
   }
+  std::cerr << "Before call." << std::endl;
   auto result = fp();
+  std::cerr << "Program exited with value " << result << std::endl;
+
+  RT->remove();
   return result;
 }
 

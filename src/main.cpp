@@ -62,9 +62,7 @@ void test_codegen() {
     auto stmt = parse_stmt(lexer);
     assert_true(std::holds_alternative<Eof>(*lexer.peek_token()), "Expect end of file");
 
-  std::cerr << "Before ctx: " << std::endl;
     CodegenContext ctx;
-  std::cerr << "After ctx: " << std::endl;
     ctx.codegen_top_level(*stmt);
   } catch (std::runtime_error& e) {
     std::cout << e.what() << std::endl;
