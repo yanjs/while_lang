@@ -36,8 +36,8 @@ void test_lexer() {
   }, "bad should not be keyword");
 }
 
-void test_ast() {
-  std::ifstream f{"test.while"};
+void test_ast(std::string filename = "test.while") {
+  std::ifstream f{filename};
   Lexer lexer{f};
 
   try {
@@ -54,8 +54,8 @@ void test_ast() {
 
 }
 
-void test_codegen() {
-  std::ifstream f{"test.while"};
+void test_codegen(std::string filename = "test.while") {
+  std::ifstream f{filename};
   Lexer lexer{f};
 
   try {
@@ -63,15 +63,23 @@ void test_codegen() {
     assert_true(std::holds_alternative<Eof>(*lexer.peek_token()), "Expect end of file");
 
     CodegenContext ctx;
-    ctx.codegen_top_level(*stmt);
+    double return_value = ctx.codegen_top_level(*stmt);
+    std::cout << "Return value: " << return_value << std::endl;
   } catch (std::runtime_error& e) {
     std::cout << e.what() << std::endl;
   }
+  std::cout << "End llvm code gen." << std::endl;
 }
     
 
-int main() {
+int main(int argc, char **argv) {
   test_lexer();
-  test_ast();
-  test_codegen();
+  if (argc > 1) {
+    test_ast(argv[1]);
+    test_codegen(argv[1]);
+  } else {
+    test_ast();
+    test_codegen();
+  }
+  std::cerr << "Success" << std::endl;
 }

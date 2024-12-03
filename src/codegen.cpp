@@ -62,40 +62,45 @@ CodegenContext::CodegenContext() :
   m_SI(std::make_unique<StandardInstrumentations>(*m_context, true)),
   m_named_values({}),
   m_functions({}),
-  m_next_id(0) {
-    llvm::InitializeNativeTarget();
-    llvm::InitializeNativeTargetAsmPrinter();
-    llvm::InitializeNativeTargetAsmParser();
+  m_next_id(0)
+{
+  llvm::InitializeNativeTarget();
+  llvm::InitializeNativeTargetAsmPrinter();
+  llvm::InitializeNativeTargetAsmParser();
 
-    auto maybe_JIT = llvm::orc::KaleidoscopeJIT::Create();
-    if (!maybe_JIT) {
-      auto err = maybe_JIT.takeError();
-      auto err_msg = llvm::toString(std::move(err));
-      std::cerr << "Failed to create KaleidoscopeJIT: " << err_msg << std::endl;
-      throw CodegenError("Failed to create KaleidoscopeJIT");
-    }
-    s_JIT = maybe_JIT.operator bool() ? std::move(maybe_JIT.get()) : nullptr;
-    if (!s_JIT) {
-      throw CodegenError("Failed to create KaleidoscopeJIT");
-    }
-
-    m_module->setDataLayout(s_JIT->getDataLayout());
-
-    m_SI->registerCallbacks(*m_PIC, m_MAM.get());
-
-    m_FPM->addPass(InstCombinePass());
-    m_FPM->addPass(ReassociatePass());
-    m_FPM->addPass(GVNPass());
-    m_FPM->addPass(SimplifyCFGPass());
-
-    PassBuilder PB;
-    PB.registerModuleAnalyses(*m_MAM);
-    PB.registerFunctionAnalyses(*m_FAM);
-    PB.crossRegisterProxies(*m_LAM, *m_FAM, *m_CGAM, *m_MAM);
-
-    BasicBlock *entry = BasicBlock::Create(*m_context, "entry", m_top_level_function.get());
-    m_builder->SetInsertPoint(entry);
+  auto maybe_JIT = llvm::orc::KaleidoscopeJIT::Create();
+  if (!maybe_JIT) {
+    auto err = maybe_JIT.takeError();
+    auto err_msg = llvm::toString(std::move(err));
+    std::cerr << "Failed to create KaleidoscopeJIT: " << err_msg << std::endl;
+    throw CodegenError("Failed to create KaleidoscopeJIT");
   }
+  s_JIT = maybe_JIT.operator bool() ? std::move(maybe_JIT.get()) : nullptr;
+  if (!s_JIT) {
+    throw CodegenError("Failed to create KaleidoscopeJIT");
+  }
+
+  m_module->setDataLayout(s_JIT->getDataLayout());
+
+  m_SI->registerCallbacks(*m_PIC, m_MAM.get());
+
+  m_FPM->addPass(InstCombinePass());
+  m_FPM->addPass(ReassociatePass());
+  m_FPM->addPass(GVNPass());
+  m_FPM->addPass(SimplifyCFGPass());
+
+  PassBuilder PB;
+  PB.registerModuleAnalyses(*m_MAM);
+  PB.registerFunctionAnalyses(*m_FAM);
+  PB.crossRegisterProxies(*m_LAM, *m_FAM, *m_CGAM, *m_MAM);
+
+  BasicBlock *entry = BasicBlock::Create(*m_context, "entry", m_top_level_function);
+  m_builder->SetInsertPoint(entry);
+}
+
+CodegenContext::~CodegenContext() {
+  s_JIT = nullptr;
+}
 
 Value *CodegenContext::codegen_VarAST(const VarAST &var) {
   auto var_name = var.get_name();
@@ -262,18 +267,24 @@ void CodegenContext::codegen_IfStmtAST(const IfStmtAST &stmt) {
   auto iffalse_name = get_next_tag("iffalse");
   auto ifmerge_name = get_next_tag("ifmerge");
 
-  Value *cond = codegen(*stmt.get_cond());
-  cond = m_builder->CreateFCmpONE(cond, ConstantFP::get(*m_context, APFloat(0.0)), ifcond_name);
-
   Function *function = m_builder->GetInsertBlock()->getParent();
 
-  BasicBlock *if_true = BasicBlock::Create(*m_context, iftrue_name, function);
+  BasicBlock *if_cond = BasicBlock::Create(*m_context, ifcond_name);
+  BasicBlock *if_true = BasicBlock::Create(*m_context, iftrue_name);
   BasicBlock *if_false = BasicBlock::Create(*m_context, iffalse_name);
   BasicBlock *if_merge = BasicBlock::Create(*m_context, ifmerge_name);
 
+  m_builder->CreateBr(if_cond);
+  // cond
+  function->insert(function->end(), if_cond);
+  m_builder->SetInsertPoint(if_cond);
+  Value *cond = codegen(*stmt.get_cond());
+  cond = m_builder->CreateFCmpONE(cond, ConstantFP::get(*m_context, APFloat(0.0)));
   m_builder->CreateCondBr(cond, if_true, if_false);
+  if_cond = m_builder->GetInsertBlock();
 
   // true branch
+  function->insert(function->end(), if_true);
   m_builder->SetInsertPoint(if_true);
   codegen(*stmt.get_then_stmt());
   m_builder->CreateBr(if_merge);
@@ -298,18 +309,19 @@ void CodegenContext::codegen_WhileStmtAST(const WhileStmtAST &stmt) {
 
   Function *function = m_builder->GetInsertBlock()->getParent();
 
-  BasicBlock *while_cond = BasicBlock::Create(*m_context, whilecond_name, function);
+  BasicBlock *while_cond = BasicBlock::Create(*m_context, whilecond_name);
   BasicBlock *while_true = BasicBlock::Create(*m_context, whiletrue_name);
   BasicBlock *while_merge = BasicBlock::Create(*m_context, whilemerge_name);
 
+  m_builder->CreateBr(while_cond);
+
   // cond
-  std::cerr << "Before cond" << std::endl;
+  function->insert(function->end(), while_cond);
   m_builder->SetInsertPoint(while_cond);
   Value *cond = codegen(*stmt.get_cond());
   cond = m_builder->CreateFCmpONE(cond, ConstantFP::get(*m_context, APFloat(0.0)), whilecond_name);
   m_builder->CreateCondBr(cond, while_true, while_merge);
   while_cond = m_builder->GetInsertBlock();
-  std::cerr << "After cond" << std::endl;
 
   // true
   function->insert(function->end(), while_true);
@@ -355,7 +367,7 @@ void CodegenContext::codegen_FuncDefAST(const FuncDefAST &func) {
   if (!maybe_body) {
     return;
   }
-  auto func_builder = std::make_unique<IRBuilder<> >(&function->getEntryBlock(), function->getEntryBlock().begin());
+  auto func_builder = std::make_unique<IRBuilder<> >(*m_context);
   std::swap(m_builder, func_builder);
 
   BasicBlock *block = BasicBlock::Create(*m_context, "entry", function);
@@ -378,6 +390,7 @@ void CodegenContext::codegen_FuncDefAST(const FuncDefAST &func) {
 
   Value *ret_value = m_builder->CreateLoad(Type::getDoubleTy(*m_context), ret, "ret");
   m_builder->CreateRet(ret_value);
+  // function->print(llvm::errs(), nullptr);
 
   // restore named values
   m_named_values = std::move(prev_named_values);
@@ -410,25 +423,24 @@ Value *CodegenContext::codegen(const ExpAST &exp) {
 
 void CodegenContext::codegen(const StmtAST &stmt) {
   if (auto t = dynamic_cast<const AsgnStmtAST*>(&stmt)) {
-    return codegen_AsgnStmtAST(*t);
+    codegen_AsgnStmtAST(*t);
   } else if (auto t = dynamic_cast<const SkipStmtAST*>(&stmt)) {
-    return codegen_SkipStmtAST(*t);
+    codegen_SkipStmtAST(*t);
   } else if (auto t = dynamic_cast<const SeqStmtAST*>(&stmt)) {
-    return codegen_SeqStmtAST(*t);
+    codegen_SeqStmtAST(*t);
   } else if (auto t = dynamic_cast<const IfStmtAST*>(&stmt)) {
-    return codegen_IfStmtAST(*t);
+    codegen_IfStmtAST(*t);
   } else if (auto t = dynamic_cast<const WhileStmtAST*>(&stmt)) {
-    std::cerr << "Before codegen_WhileStmtAST" << std::endl;
-    return codegen_WhileStmtAST(*t);
+    codegen_WhileStmtAST(*t);
   } else if (auto t = dynamic_cast<const FuncDefAST*>(&stmt)) {
-    return codegen_FuncDefAST(*t);
+    codegen_FuncDefAST(*t);
   } else {
     throw CodegenError("Codegen: unknown expression or statement type");
   }
 }
 
 double CodegenContext::codegen_top_level(const StmtAST &stmt) {
-  AllocaInst *ret = create_entry_block_alloca(m_top_level_function.get(), "ret");
+  AllocaInst *ret = create_entry_block_alloca(m_top_level_function, "ret");
   m_builder->CreateStore(ConstantFP::get(*m_context, APFloat(0.0)), ret);
   m_named_values["ret"] = ret;
 
@@ -441,24 +453,34 @@ double CodegenContext::codegen_top_level(const StmtAST &stmt) {
   auto TSM = llvm::orc::ThreadSafeModule(std::move(m_module), std::move(m_context));
   auto error = s_JIT->addModule(std::move(TSM), RT);
 
-  m_top_level_function->print(llvm::errs(), nullptr);
+  // m_top_level_function->print(llvm::errs(), nullptr);
+  auto failed = verifyFunction(*m_top_level_function, &llvm::errs());
+
+  if (failed) {
+    m_top_level_function->eraseFromParent();
+    throw CodegenError("Codegen: failed to verify function");
+  }
 
   auto maybe_expr_symbol = s_JIT->lookup("__anon_expr");
   if (!maybe_expr_symbol) {
     auto err = maybe_expr_symbol.takeError();
     auto err_message = llvm::toString(std::move(err));
-
+    std::cerr << "Failed to lookup __anon_expr: " << err_message << std::endl;
+    return -41.0;
   }
   auto expr_symbol = maybe_expr_symbol.get();
   double (*fp)() = expr_symbol.getAddress().toPtr<double (*)()>();
   if (!fp) {
     return -42.0;
   }
-  std::cerr << "Before call." << std::endl;
   auto result = fp();
   std::cerr << "Program exited with value " << result << std::endl;
 
-  RT->remove();
+  if (auto error = RT->remove()) {
+    std::cerr << "Failed to remove resource tracker. " << std::endl;
+  }
+
+  std::cerr << "Exit." << std::endl;
   return result;
 }
 

@@ -50,11 +50,12 @@ class CodegenContext {
   std::unique_ptr<llvm::PassInstrumentationCallbacks> m_PIC;
   std::unique_ptr<llvm::StandardInstrumentations> m_SI;
 
-  std::unique_ptr<llvm::Function> m_top_level_function;
+  llvm::Function* m_top_level_function;
 
   std::size_t m_next_id;
 public:
   CodegenContext();
+  ~CodegenContext();
   llvm::Value *codegen(const ExpAST &exp);
   void codegen(const StmtAST &stmt);
 
