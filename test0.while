@@ -19,5 +19,5 @@ func fib(x)
     ret := fib(x - 1) + fib(x - 2)
   fi
 cnuf;
-fb := 1 + fib(10);
+fb := 1 + fib(lo + 9);
 ret := fb

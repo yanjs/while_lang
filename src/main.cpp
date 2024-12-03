@@ -40,14 +40,15 @@ void test_ast(std::string filename = "test.while") {
   std::ifstream f{filename};
   Lexer lexer{f};
 
+  std::cout << "AST execution:" << std::endl;
+
   try {
     auto stmt = parse_stmt(lexer);
     assert_true(std::holds_alternative<Eof>(*lexer.peek_token()), "Expect end of file");
     auto state = State{};
     stmt->run(state);
-    std::cout << "State after execution: " << std::endl;
-    state.print();
-    std::cout << "End State" << std::endl;
+    std::cout << "Return value after execution: ";
+    std::cout << state["ret"] << std::endl;
   } catch (std::runtime_error& e) {
     std::cout << e.what() << std::endl;
   }
@@ -58,17 +59,17 @@ void test_codegen(std::string filename = "test.while") {
   std::ifstream f{filename};
   Lexer lexer{f};
 
+  std::cout << "LLVM execution:" << std::endl;
+
   try {
     auto stmt = parse_stmt(lexer);
     assert_true(std::holds_alternative<Eof>(*lexer.peek_token()), "Expect end of file");
 
     CodegenContext ctx;
     double return_value = ctx.codegen_top_level(*stmt);
-    std::cout << "Return value: " << return_value << std::endl;
   } catch (std::runtime_error& e) {
     std::cout << e.what() << std::endl;
   }
-  std::cout << "End llvm code gen." << std::endl;
 }
     
 
